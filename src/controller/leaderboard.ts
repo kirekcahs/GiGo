@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import User from "@/models/Users.js";
-
+import mongoose from "mongoose";
 export const getLeaderboard = async (req: Request, res: Response) => {
   try {
     const requestedLimit = req.query.limit ?? "10";
@@ -31,10 +31,35 @@ export const getLeaderboard = async (req: Request, res: Response) => {
       totalPoints: user.totalPoints,
     }));
 
+    // The caller's own rank, even if they're outside the top N
+    let me = null;
+    if (req.userId && mongoose.isValidObjectId(req.userId)) {
+      const meDoc = await User.findById(req.userId)
+        .select("username fullName totalPoints")
+        .lean();
+      if (meDoc) {
+        // same ordering as the list: points desc, then _id asc
+        const ahead = await User.countDocuments({
+          $or: [
+            { totalPoints: { $gt: meDoc.totalPoints } },
+            { totalPoints: meDoc.totalPoints, _id: { $lt: meDoc._id } },
+          ],
+        });
+        me = {
+          rank: ahead + 1,
+          userId: meDoc._id.toString(),
+          username: meDoc.username,
+          fullName: meDoc.fullName ?? null,
+          totalPoints: meDoc.totalPoints,
+        };
+      }
+    }
+
     return res.status(200).json({
       success: true,
       count: leaderboard.length,
       leaderboard,
+      me,
     });
   } catch (error: unknown) {
     console.error("Leaderboard error:", error);
